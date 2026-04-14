@@ -50,6 +50,13 @@ Build a modern, visually immersive hospitality website for "Hosting" - a premium
 - [x] Property CRUD: Add, Edit, Delete properties from admin panel
 - [x] Admin Bookings view (table with status, dates, amounts)
 - [x] Admin Contact Inquiries view
+- [x] **SMTP Email Notifications** - configurable from admin panel
+- [x] SMTP settings: host, port, username, password, TLS, from/to email
+- [x] Enable/disable toggle + per-type toggles (booking alerts, inquiry alerts)
+- [x] Test email button to verify SMTP configuration
+- [x] Email logs panel showing sent/failed status
+- [x] Auto-notification on new bookings and contact inquiries
+- [x] Branded HTML email templates for booking & contact notifications
 
 ## Testing Status
 - Backend: 100% (10/10 API tests passed)
