@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 class HospitalityAPITester:
-    def __init__(self, base_url="https://kochi-stays-1.preview.emergentagent.com"):
+    def __init__(self, base_url="https://2cc4386a-33c8-47f0-b9ec-7ab4469f5518.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0
@@ -292,6 +292,195 @@ class HospitalityAPITester:
         """Test admin logout"""
         return self.run_test("Admin Logout", "POST", "api/auth/logout", 200)
 
+    # --- SMTP Email Tests ---
+    def test_get_smtp_config(self):
+        """Test getting SMTP configuration"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        success, data = self.run_test("Get SMTP Config", "GET", "api/admin/smtp", 200, headers=headers)
+        if success:
+            print(f"   SMTP Host: {data.get('smtp_host', 'Not configured')}")
+            print(f"   SMTP Port: {data.get('smtp_port', 'Not configured')}")
+            print(f"   Enabled: {data.get('enabled', False)}")
+            print(f"   Password masked: {data.get('smtp_password') == '••••••••'}")
+        return success, data
+
+    def test_save_smtp_config(self):
+        """Test saving SMTP configuration"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        
+        smtp_config = {
+            "smtp_host": "smtp.gmail.com",
+            "smtp_port": 587,
+            "smtp_username": "test@hosting.com",
+            "smtp_password": "test_app_password",
+            "from_email": "noreply@hosting.com",
+            "from_name": "Hosting Kochi",
+            "to_email": "admin@hosting.com",
+            "use_tls": True,
+            "enabled": True,
+            "notify_booking": True,
+            "notify_contact": True
+        }
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        
+        success, data = self.run_test("Save SMTP Config", "POST", "api/admin/smtp", 200, smtp_config, headers)
+        if success:
+            print(f"   SMTP settings saved successfully")
+        return success, data
+
+    def test_smtp_test_email(self):
+        """Test sending SMTP test email (expected to fail with test credentials)"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        
+        # This should return 400 because we're using test SMTP credentials
+        success, data = self.run_test("SMTP Test Email", "POST", "api/admin/smtp/test", 400, {}, headers)
+        if success:
+            print(f"   Expected failure with test SMTP credentials")
+        return success, data
+
+    def test_get_email_logs(self):
+        """Test getting email logs"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        success, data = self.run_test("Get Email Logs", "GET", "api/admin/email-logs", 200, headers=headers)
+        if success and isinstance(data, list):
+            print(f"   Found {len(data)} email log entries")
+            for log in data[:3]:  # Show first 3 logs
+                print(f"   - {log.get('type', 'unknown')}: {log.get('success', False)} ({log.get('created_at', 'no date')[:10]})")
+        return success, data
+
+    def test_unauthorized_smtp_access(self):
+        """Test unauthorized access to SMTP endpoints"""
+        # Test without token
+        success1, _ = self.run_test("Unauthorized SMTP Config", "GET", "api/admin/smtp", 401)
+        success2, _ = self.run_test("Unauthorized SMTP Save", "POST", "api/admin/smtp", 401, {})
+        success3, _ = self.run_test("Unauthorized SMTP Test", "POST", "api/admin/smtp/test", 401, {})
+        success4, _ = self.run_test("Unauthorized Email Logs", "GET", "api/admin/email-logs", 401)
+        
+        return success1 and success2 and success3 and success4
+
+    def test_booking_email_notification(self):
+        """Test that booking creation triggers email notification attempt"""
+        # Get initial email logs count
+        if self.admin_token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.admin_token}'
+            }
+            initial_logs_success, initial_logs = self.run_test("Initial Email Logs", "GET", "api/admin/email-logs", 200, headers=headers)
+            initial_count = len(initial_logs) if initial_logs_success and isinstance(initial_logs, list) else 0
+        else:
+            initial_count = 0
+
+        # Create a booking
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        day_after = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+        
+        booking_data = {
+            "property_id": "prop-001",
+            "guest_name": "Email Test Guest",
+            "guest_email": "emailtest@example.com",
+            "guest_phone": "+91 9876543210",
+            "check_in": tomorrow,
+            "check_out": day_after,
+            "guests": 2,
+            "total_amount": 3500
+        }
+        
+        booking_success, booking_data_response = self.run_test("Booking for Email Test", "POST", "api/bookings", 200, booking_data)
+        
+        if booking_success and self.admin_token:
+            # Wait a moment for async email processing
+            import time
+            time.sleep(2)
+            
+            # Check if email log was created
+            final_logs_success, final_logs = self.run_test("Final Email Logs", "GET", "api/admin/email-logs", 200, headers=headers)
+            if final_logs_success and isinstance(final_logs, list):
+                final_count = len(final_logs)
+                if final_count > initial_count:
+                    print(f"   ✅ Email notification triggered (logs increased from {initial_count} to {final_count})")
+                    # Check if the latest log is for booking
+                    latest_log = final_logs[0] if final_logs else {}
+                    if latest_log.get('type') == 'booking':
+                        print(f"   ✅ Latest log is booking notification: {latest_log.get('ref_id')}")
+                        return True, final_logs
+                    else:
+                        print(f"   ⚠️ Latest log is not booking type: {latest_log.get('type')}")
+                else:
+                    print(f"   ⚠️ No new email logs created (still {final_count})")
+        
+        return booking_success, booking_data_response
+
+    def test_contact_email_notification(self):
+        """Test that contact form submission triggers email notification attempt"""
+        # Get initial email logs count
+        if self.admin_token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.admin_token}'
+            }
+            initial_logs_success, initial_logs = self.run_test("Initial Contact Email Logs", "GET", "api/admin/email-logs", 200, headers=headers)
+            initial_count = len(initial_logs) if initial_logs_success and isinstance(initial_logs, list) else 0
+        else:
+            initial_count = 0
+
+        # Submit contact form
+        contact_data = {
+            "name": "Email Test Contact",
+            "phone": "+91 9876543210",
+            "message": "This is a test message to check email notifications."
+        }
+        
+        contact_success, contact_response = self.run_test("Contact for Email Test", "POST", "api/contact", 200, contact_data)
+        
+        if contact_success and self.admin_token:
+            # Wait a moment for async email processing
+            import time
+            time.sleep(2)
+            
+            # Check if email log was created
+            final_logs_success, final_logs = self.run_test("Final Contact Email Logs", "GET", "api/admin/email-logs", 200, headers=headers)
+            if final_logs_success and isinstance(final_logs, list):
+                final_count = len(final_logs)
+                if final_count > initial_count:
+                    print(f"   ✅ Email notification triggered (logs increased from {initial_count} to {final_count})")
+                    # Check if the latest log is for contact
+                    latest_log = final_logs[0] if final_logs else {}
+                    if latest_log.get('type') == 'contact':
+                        print(f"   ✅ Latest log is contact notification: {latest_log.get('ref_id')}")
+                        return True, final_logs
+                    else:
+                        print(f"   ⚠️ Latest log is not contact type: {latest_log.get('type')}")
+                else:
+                    print(f"   ⚠️ No new email logs created (still {final_count})")
+        
+        return contact_success, contact_response
+
 def main():
     print("🏨 Starting Hospitality Website API Tests")
     print("=" * 50)
@@ -362,6 +551,22 @@ def main():
         
         # Test unauthorized access
         tester.test_unauthorized_admin_access()
+        
+        # Test SMTP email functionality
+        print("\n" + "=" * 50)
+        print("📧 Testing SMTP Email Functionality")
+        print("=" * 50)
+        
+        # Test SMTP endpoints
+        tester.test_get_smtp_config()
+        tester.test_save_smtp_config()
+        tester.test_smtp_test_email()  # Expected to fail with test credentials
+        tester.test_get_email_logs()
+        tester.test_unauthorized_smtp_access()
+        
+        # Test email notifications on booking/contact
+        tester.test_booking_email_notification()
+        tester.test_contact_email_notification()
         
         # Test logout
         tester.test_admin_logout()

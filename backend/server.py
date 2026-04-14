@@ -13,6 +13,12 @@ import os
 import uuid
 import bcrypt
 import jwt
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import asyncio
+import traceback
 
 app = FastAPI()
 
@@ -112,6 +118,129 @@ class ContactCreate(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+class SmtpConfig(BaseModel):
+    smtp_host: str
+    smtp_port: int = 587
+    smtp_username: str
+    smtp_password: str
+    from_email: str
+    from_name: str = "Hosting Kochi"
+    to_email: str
+    use_tls: bool = True
+    enabled: bool = True
+    notify_booking: bool = True
+    notify_contact: bool = True
+
+# --- Email Utility ---
+async def get_smtp_config():
+    config = await db.smtp_config.find_one({"config_id": "main"}, {"_id": 0})
+    return config
+
+def send_email_sync(config: dict, subject: str, html_body: str, to_email: str = None):
+    recipient = to_email or config["to_email"]
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f'{config.get("from_name", "Hosting")} <{config["from_email"]}>'
+    msg["To"] = recipient
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        if config.get("use_tls", True):
+            context = ssl.create_default_context()
+            with smtplib.SMTP(config["smtp_host"], config["smtp_port"], timeout=10) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.ehlo()
+                server.login(config["smtp_username"], config["smtp_password"])
+                server.sendmail(config["from_email"], recipient, msg.as_string())
+        else:
+            with smtplib.SMTP(config["smtp_host"], config["smtp_port"], timeout=10) as server:
+                server.ehlo()
+                server.login(config["smtp_username"], config["smtp_password"])
+                server.sendmail(config["from_email"], recipient, msg.as_string())
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+async def send_email_async(config: dict, subject: str, html_body: str, to_email: str = None):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, send_email_sync, config, subject, html_body, to_email)
+
+def build_booking_email(booking: dict, property_name: str) -> str:
+    return f"""
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #F8F6F2; padding: 32px;">
+      <div style="background: #0D2B2C; padding: 24px 32px; border-radius: 16px 16px 0 0;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 22px;">New Booking Received</h1>
+      </div>
+      <div style="background: #ffffff; padding: 28px 32px; border-radius: 0 0 16px 16px; border: 1px solid #E3DCD1; border-top: none;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Booking ID</td><td style="padding: 8px 0; font-weight: 600; color: #0B1B1C; font-size: 14px;">{booking.get('booking_id', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Guest Name</td><td style="padding: 8px 0; font-weight: 600; color: #0B1B1C; font-size: 14px;">{booking.get('guest_name', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Email</td><td style="padding: 8px 0; color: #0B1B1C; font-size: 14px;">{booking.get('guest_email', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Phone</td><td style="padding: 8px 0; color: #0B1B1C; font-size: 14px;">{booking.get('guest_phone', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Property</td><td style="padding: 8px 0; font-weight: 600; color: #0B1B1C; font-size: 14px;">{property_name}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Check-in</td><td style="padding: 8px 0; color: #0B1B1C; font-size: 14px;">{booking.get('check_in', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Check-out</td><td style="padding: 8px 0; color: #0B1B1C; font-size: 14px;">{booking.get('check_out', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Guests</td><td style="padding: 8px 0; color: #0B1B1C; font-size: 14px;">{booking.get('guests', 'N/A')}</td></tr>
+          <tr style="border-top: 1px solid #E3DCD1;"><td style="padding: 12px 0 8px; color: #4A5555; font-size: 14px; font-weight: 600;">Total Amount</td><td style="padding: 12px 0 8px; font-weight: 700; color: #0D2B2C; font-size: 18px;">&#8377;{booking.get('total_amount', 0):,}</td></tr>
+        </table>
+      </div>
+      <p style="text-align: center; color: #4A5555; font-size: 12px; margin-top: 16px;">Hosting | Premium Staycation Homes, Kochi</p>
+    </div>
+    """
+
+def build_contact_email(contact: dict) -> str:
+    return f"""
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #F8F6F2; padding: 32px;">
+      <div style="background: #0D2B2C; padding: 24px 32px; border-radius: 16px 16px 0 0;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 22px;">New Contact Inquiry</h1>
+      </div>
+      <div style="background: #ffffff; padding: 28px 32px; border-radius: 0 0 16px 16px; border: 1px solid #E3DCD1; border-top: none;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Name</td><td style="padding: 8px 0; font-weight: 600; color: #0B1B1C; font-size: 14px;">{contact.get('name', 'N/A')}</td></tr>
+          <tr><td style="padding: 8px 0; color: #4A5555; font-size: 14px;">Phone</td><td style="padding: 8px 0; color: #0B1B1C; font-size: 14px;">{contact.get('phone', 'N/A')}</td></tr>
+        </table>
+        <div style="margin-top: 16px; padding: 16px; background: #F8F6F2; border-radius: 12px;">
+          <p style="color: #4A5555; font-size: 12px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 1px;">Message</p>
+          <p style="color: #0B1B1C; font-size: 14px; line-height: 1.6; margin: 0;">{contact.get('message', 'N/A')}</p>
+        </div>
+      </div>
+      <p style="text-align: center; color: #4A5555; font-size: 12px; margin-top: 16px;">Hosting | Premium Staycation Homes, Kochi</p>
+    </div>
+    """
+
+async def try_send_booking_notification(booking: dict):
+    try:
+        config = await get_smtp_config()
+        if not config or not config.get("enabled") or not config.get("notify_booking"):
+            return
+        prop = await db.properties.find_one({"property_id": booking.get("property_id")}, {"name": 1, "_id": 0})
+        property_name = prop.get("name", booking.get("property_id")) if prop else booking.get("property_id")
+        html = build_booking_email(booking, property_name)
+        success, error = await send_email_async(config, f"New Booking: {booking.get('booking_id')}", html)
+        await db.email_logs.insert_one({
+            "type": "booking", "ref_id": booking.get("booking_id"),
+            "to": config["to_email"], "success": success, "error": error,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+    except Exception as e:
+        print(f"Email notification error: {e}")
+
+async def try_send_contact_notification(contact: dict):
+    try:
+        config = await get_smtp_config()
+        if not config or not config.get("enabled") or not config.get("notify_contact"):
+            return
+        html = build_contact_email(contact)
+        success, error = await send_email_async(config, f"New Inquiry from {contact.get('name', 'Guest')}", html)
+        await db.email_logs.insert_one({
+            "type": "contact", "ref_id": contact.get("contact_id"),
+            "to": config["to_email"], "success": success, "error": error,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+    except Exception as e:
+        print(f"Email notification error: {e}")
 
 # --- Seed Data ---
 SEED_PROPERTIES = [
@@ -328,6 +457,78 @@ async def get_admin_stats(request: Request):
         "revenue": total_revenue
     }
 
+# --- Admin SMTP Config ---
+@app.get("/api/admin/smtp")
+async def get_smtp_settings(request: Request):
+    await get_current_admin(request)
+    config = await db.smtp_config.find_one({"config_id": "main"}, {"_id": 0})
+    if config:
+        config["smtp_password"] = "••••••••" if config.get("smtp_password") else ""
+    return config or {}
+
+@app.post("/api/admin/smtp")
+async def save_smtp_settings(request: Request):
+    await get_current_admin(request)
+    data = await request.json()
+    existing = await db.smtp_config.find_one({"config_id": "main"})
+    doc = {
+        "config_id": "main",
+        "smtp_host": data.get("smtp_host", ""),
+        "smtp_port": int(data.get("smtp_port", 587)),
+        "smtp_username": data.get("smtp_username", ""),
+        "from_email": data.get("from_email", ""),
+        "from_name": data.get("from_name", "Hosting Kochi"),
+        "to_email": data.get("to_email", ""),
+        "use_tls": data.get("use_tls", True),
+        "enabled": data.get("enabled", True),
+        "notify_booking": data.get("notify_booking", True),
+        "notify_contact": data.get("notify_contact", True),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    password = data.get("smtp_password", "")
+    if password and password != "••••••••":
+        doc["smtp_password"] = password
+    elif existing:
+        doc["smtp_password"] = existing.get("smtp_password", "")
+    else:
+        doc["smtp_password"] = password
+
+    await db.smtp_config.update_one(
+        {"config_id": "main"}, {"$set": doc}, upsert=True
+    )
+    return {"message": "SMTP settings saved"}
+
+@app.post("/api/admin/smtp/test")
+async def test_smtp(request: Request):
+    await get_current_admin(request)
+    config = await db.smtp_config.find_one({"config_id": "main"}, {"_id": 0})
+    if not config:
+        raise HTTPException(status_code=400, detail="SMTP not configured. Please save settings first.")
+    if not config.get("smtp_host") or not config.get("smtp_username"):
+        raise HTTPException(status_code=400, detail="Incomplete SMTP settings. Please fill all required fields.")
+    html = """
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #F8F6F2; padding: 32px;">
+      <div style="background: #0D2B2C; padding: 24px 32px; border-radius: 16px 16px 0 0;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 22px;">SMTP Test Successful</h1>
+      </div>
+      <div style="background: #ffffff; padding: 28px 32px; border-radius: 0 0 16px 16px; border: 1px solid #E3DCD1; border-top: none;">
+        <p style="color: #0B1B1C; font-size: 16px;">Your email notifications are working correctly!</p>
+        <p style="color: #4A5555; font-size: 14px;">You will receive notifications for new bookings and contact inquiries.</p>
+      </div>
+      <p style="text-align: center; color: #4A5555; font-size: 12px; margin-top: 16px;">Hosting | Premium Staycation Homes, Kochi</p>
+    </div>
+    """
+    success, error = await send_email_async(config, "Hosting - SMTP Test Email", html)
+    if success:
+        return {"message": f"Test email sent to {config['to_email']}"}
+    raise HTTPException(status_code=400, detail=f"Failed to send: {error}")
+
+@app.get("/api/admin/email-logs")
+async def get_email_logs(request: Request):
+    await get_current_admin(request)
+    logs = await db.email_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return logs
+
 # --- Bookings ---
 @app.post("/api/bookings")
 async def create_booking(booking: BookingCreate):
@@ -352,6 +553,7 @@ async def create_booking(booking: BookingCreate):
             {"booking_id": booking_id},
             {"$set": {"razorpay_order_id": order_id, "payment_status": "test_created"}}
         )
+        asyncio.create_task(try_send_booking_notification(booking_doc))
         return {
             "booking_id": booking_id,
             "order_id": order_id,
@@ -359,6 +561,7 @@ async def create_booking(booking: BookingCreate):
             "currency": "INR",
             "test_mode": True
         }
+    asyncio.create_task(try_send_booking_notification(booking_doc))
     return {"booking_id": booking_id, "status": "created"}
 
 @app.post("/api/bookings/confirm")
@@ -398,4 +601,5 @@ async def submit_contact(contact: ContactCreate):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.contacts.insert_one(contact_doc)
+    asyncio.create_task(try_send_contact_notification(contact_doc))
     return {"status": "success", "message": "We'll get back to you soon!"}

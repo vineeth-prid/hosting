@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import {
   Home, CalendarCheck, MessageSquare, IndianRupee, Plus, Pencil, Trash2,
-  LogOut, X, Loader2, AlertCircle, CheckCircle2, ChevronLeft
+  LogOut, X, Loader2, AlertCircle, CheckCircle2, ChevronLeft, Mail, Send, Settings, ToggleLeft, ToggleRight
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -227,6 +227,233 @@ function DeleteConfirmModal({ property, onClose, onConfirm, loading }) {
   );
 }
 
+// --- Email Settings Tab ---
+function EmailSettingsTab({ showToast }) {
+  const [form, setForm] = useState({
+    smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '',
+    from_email: '', from_name: 'Hosting Kochi', to_email: '',
+    use_tls: true, enabled: true, notify_booking: true, notify_contact: true,
+  });
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [hasConfig, setHasConfig] = useState(false);
+
+  useEffect(() => {
+    const fetchSmtp = async () => {
+      try {
+        const headers = getAuthHeaders();
+        const [configRes, logsRes] = await Promise.all([
+          axios.get(`${API}/api/admin/smtp`, { headers }),
+          axios.get(`${API}/api/admin/email-logs`, { headers }),
+        ]);
+        if (configRes.data && configRes.data.smtp_host) {
+          setForm(prev => ({ ...prev, ...configRes.data }));
+          setHasConfig(true);
+        }
+        setLogs(logsRes.data || []);
+      } catch (err) { /* ignore */ }
+      setLoading(false);
+    };
+    fetchSmtp();
+  }, []);
+
+  const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+  const handleSave = async () => {
+    if (!form.smtp_host || !form.smtp_username || !form.from_email || !form.to_email) {
+      showToast('Please fill all required SMTP fields', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await axios.post(`${API}/api/admin/smtp`, form, { headers: getAuthHeaders() });
+      setHasConfig(true);
+      showToast('SMTP settings saved successfully');
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Failed to save settings', 'error');
+    } finally { setSaving(false); }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    try {
+      const res = await axios.post(`${API}/api/admin/smtp/test`, {}, { headers: getAuthHeaders() });
+      showToast(res.data.message);
+      const logsRes = await axios.get(`${API}/api/admin/email-logs`, { headers: getAuthHeaders() });
+      setLogs(logsRes.data || []);
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Test email failed', 'error');
+    } finally { setTesting(false); }
+  };
+
+  if (loading) {
+    return <div className="flex justify-center py-12"><Loader2 className="animate-spin text-deep-teal" size={24} /></div>;
+  }
+
+  const inputCls = "w-full bg-sand-light border border-border-sand rounded-xl px-4 py-2.5 font-body text-sm text-heading placeholder:text-body-text/40 focus:outline-none focus:ring-2 focus:ring-deep-teal/20 focus:border-deep-teal transition-all";
+
+  return (
+    <div>
+      <h2 className="font-heading text-2xl font-medium text-heading mb-6">Email Notifications</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* SMTP Config Form */}
+        <div className="lg:col-span-2">
+          <div className="bg-white rounded-xl border border-border-sand p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Settings size={18} className="text-warm-sand" />
+                <h3 className="font-heading text-lg font-medium text-heading">SMTP Configuration</h3>
+              </div>
+              <button
+                data-testid="smtp-toggle-enabled"
+                onClick={() => handleChange('enabled', !form.enabled)}
+                className="flex items-center gap-2 font-body text-sm"
+              >
+                {form.enabled ? (
+                  <ToggleRight size={28} className="text-green-500" />
+                ) : (
+                  <ToggleLeft size={28} className="text-body-text/40" />
+                )}
+                <span className={form.enabled ? 'text-green-600' : 'text-body-text/60'}>
+                  {form.enabled ? 'Enabled' : 'Disabled'}
+                </span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="sm:col-span-2">
+                <label className="font-body text-sm text-body-text block mb-1">SMTP Host *</label>
+                <input data-testid="smtp-host" type="text" value={form.smtp_host}
+                  onChange={e => handleChange('smtp_host', e.target.value)}
+                  placeholder="smtp.gmail.com" className={inputCls} />
+              </div>
+              <div>
+                <label className="font-body text-sm text-body-text block mb-1">Port *</label>
+                <input data-testid="smtp-port" type="number" value={form.smtp_port}
+                  onChange={e => handleChange('smtp_port', parseInt(e.target.value) || 587)}
+                  placeholder="587" className={inputCls} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="font-body text-sm text-body-text block mb-1">Username / Email *</label>
+                <input data-testid="smtp-username" type="text" value={form.smtp_username}
+                  onChange={e => handleChange('smtp_username', e.target.value)}
+                  placeholder="your@gmail.com" className={inputCls} />
+              </div>
+              <div>
+                <label className="font-body text-sm text-body-text block mb-1">Password / App Password *</label>
+                <input data-testid="smtp-password" type="password" value={form.smtp_password}
+                  onChange={e => handleChange('smtp_password', e.target.value)}
+                  placeholder="Enter password" className={inputCls} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="font-body text-sm text-body-text block mb-1">From Email *</label>
+                <input data-testid="smtp-from-email" type="email" value={form.from_email}
+                  onChange={e => handleChange('from_email', e.target.value)}
+                  placeholder="noreply@hosting.com" className={inputCls} />
+              </div>
+              <div>
+                <label className="font-body text-sm text-body-text block mb-1">From Name</label>
+                <input data-testid="smtp-from-name" type="text" value={form.from_name}
+                  onChange={e => handleChange('from_name', e.target.value)}
+                  placeholder="Hosting Kochi" className={inputCls} />
+              </div>
+            </div>
+
+            <div>
+              <label className="font-body text-sm text-body-text block mb-1">Notification Recipient Email *</label>
+              <input data-testid="smtp-to-email" type="email" value={form.to_email}
+                onChange={e => handleChange('to_email', e.target.value)}
+                placeholder="admin@hosting.com" className={inputCls} />
+              <p className="font-body text-xs text-body-text/50 mt-1">All notifications will be sent to this email</p>
+            </div>
+
+            <div className="flex items-center gap-6 pt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input data-testid="smtp-use-tls" type="checkbox" checked={form.use_tls}
+                  onChange={e => handleChange('use_tls', e.target.checked)}
+                  className="w-4 h-4 accent-deep-teal rounded" />
+                <span className="font-body text-sm text-body-text">Use TLS</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input data-testid="smtp-notify-booking" type="checkbox" checked={form.notify_booking}
+                  onChange={e => handleChange('notify_booking', e.target.checked)}
+                  className="w-4 h-4 accent-deep-teal rounded" />
+                <span className="font-body text-sm text-body-text">Booking Alerts</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input data-testid="smtp-notify-contact" type="checkbox" checked={form.notify_contact}
+                  onChange={e => handleChange('notify_contact', e.target.checked)}
+                  className="w-4 h-4 accent-deep-teal rounded" />
+                <span className="font-body text-sm text-body-text">Inquiry Alerts</span>
+              </label>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button data-testid="smtp-save-btn" onClick={handleSave} disabled={saving}
+                className="flex items-center gap-2 bg-deep-teal text-white font-body text-sm px-6 py-2.5 rounded-full hover:bg-teal-hover transition-all disabled:opacity-60">
+                {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                {saving ? 'Saving...' : 'Save Settings'}
+              </button>
+              {hasConfig && (
+                <button data-testid="smtp-test-btn" onClick={handleTest} disabled={testing}
+                  className="flex items-center gap-2 font-body text-sm text-deep-teal border border-deep-teal px-5 py-2.5 rounded-full hover:bg-deep-teal hover:text-white transition-all disabled:opacity-60">
+                  {testing ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+                  {testing ? 'Sending...' : 'Send Test Email'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Email Logs */}
+        <div>
+          <div className="bg-white rounded-xl border border-border-sand p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Mail size={16} className="text-warm-sand" />
+              <h3 className="font-heading text-base font-medium text-heading">Recent Email Logs</h3>
+            </div>
+            {logs.length === 0 ? (
+              <div className="text-center py-8">
+                <Mail size={28} className="mx-auto text-border-sand mb-2" />
+                <p className="font-body text-xs text-body-text">No emails sent yet</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5 max-h-[480px] overflow-y-auto">
+                {logs.map((log, i) => (
+                  <div key={i} data-testid={`email-log-${i}`}
+                    className={`p-3 rounded-lg border text-xs font-body ${
+                      log.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`font-medium ${log.success ? 'text-green-700' : 'text-red-700'}`}>
+                        {log.success ? 'Sent' : 'Failed'}
+                      </span>
+                      <span className="text-body-text/50">{log.created_at?.split('T')[0]}</span>
+                    </div>
+                    <p className="text-body-text">
+                      {log.type === 'booking' ? 'Booking' : log.type === 'contact' ? 'Inquiry' : 'Test'}: {log.ref_id || 'test'}
+                    </p>
+                    {log.error && <p className="text-red-500 mt-1 truncate" title={log.error}>{log.error}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Main Admin Dashboard ---
 export default function AdminDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('properties');
@@ -297,6 +524,7 @@ export default function AdminDashboard({ user, onLogout }) {
     { id: 'properties', label: 'Properties', icon: Home },
     { id: 'bookings', label: 'Bookings', icon: CalendarCheck },
     { id: 'contacts', label: 'Inquiries', icon: MessageSquare },
+    { id: 'email', label: 'Email Settings', icon: Mail },
   ];
 
   return (
@@ -478,6 +706,11 @@ export default function AdminDashboard({ user, onLogout }) {
               </div>
             )}
           </div>
+        )}
+
+        {/* Email Settings Tab */}
+        {activeTab === 'email' && (
+          <EmailSettingsTab showToast={showToast} />
         )}
       </div>
 
