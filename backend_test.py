@@ -6,12 +6,13 @@ import json
 from datetime import datetime, timedelta
 
 class HospitalityAPITester:
-    def __init__(self, base_url="https://2cc4386a-33c8-47f0-b9ec-7ab4469f5518.preview.emergentagent.com"):
+    def __init__(self, base_url="https://kochi-stays-1.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0
         self.failed_tests = []
         self.passed_tests = []
+        self.admin_token = None
 
     def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
         """Run a single API test"""
@@ -146,6 +147,151 @@ class HospitalityAPITester:
         success2, _ = self.run_test("Invalid Booking ID", "GET", "api/bookings/invalid-id", 404)
         return success and success2
 
+    # --- Admin Panel Tests ---
+    def test_admin_login(self, email="admin@hosting.com", password="Hosting@2026"):
+        """Test admin login"""
+        login_data = {"email": email, "password": password}
+        success, data = self.run_test("Admin Login", "POST", "api/auth/login", 200, login_data)
+        if success and 'token' in data:
+            self.admin_token = data['token']
+            print(f"   Admin token obtained: {self.admin_token[:20]}...")
+            print(f"   User: {data.get('user', {}).get('email')} ({data.get('user', {}).get('role')})")
+            return True, data
+        return success, data
+
+    def test_admin_login_invalid(self):
+        """Test admin login with invalid credentials"""
+        login_data = {"email": "admin@hosting.com", "password": "wrongpassword"}
+        return self.run_test("Admin Login Invalid", "POST", "api/auth/login", 401, login_data)
+
+    def test_admin_me(self):
+        """Test getting current admin user"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        return self.run_test("Admin Me", "GET", "api/auth/me", 200, headers=headers)
+
+    def test_admin_stats(self):
+        """Test getting admin stats"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        success, data = self.run_test("Admin Stats", "GET", "api/admin/stats", 200, headers=headers)
+        if success:
+            print(f"   Properties: {data.get('properties', 0)}")
+            print(f"   Bookings: {data.get('bookings', 0)}")
+            print(f"   Contacts: {data.get('contacts', 0)}")
+            print(f"   Revenue: ₹{data.get('revenue', 0)}")
+        return success, data
+
+    def test_admin_bookings(self):
+        """Test getting admin bookings"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        return self.run_test("Admin Bookings", "GET", "api/admin/bookings", 200, headers=headers)
+
+    def test_admin_contacts(self):
+        """Test getting admin contacts"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        return self.run_test("Admin Contacts", "GET", "api/admin/contacts", 200, headers=headers)
+
+    def test_admin_create_property(self):
+        """Test creating a property via admin"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        
+        property_data = {
+            "name": "Test Property",
+            "location": "Test Location, Kochi",
+            "price_per_night": 2500,
+            "description": "A test property for API testing",
+            "amenities": ["WiFi", "AC", "Kitchen"],
+            "images": ["https://images.unsplash.com/photo-1721216596273-586bfde422e7?w=800&q=80"],
+            "max_guests": 4,
+            "rating": 4.0,
+            "reviews_count": 0
+        }
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        
+        success, data = self.run_test("Admin Create Property", "POST", "api/admin/properties", 200, property_data, headers)
+        if success and 'property_id' in data:
+            print(f"   Created property ID: {data['property_id']}")
+            return True, data
+        return success, data
+
+    def test_admin_update_property(self, property_id):
+        """Test updating a property via admin"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        
+        update_data = {
+            "name": "Updated Test Property",
+            "price_per_night": 3000
+        }
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        
+        return self.run_test(f"Admin Update Property {property_id}", "PUT", f"api/admin/properties/{property_id}", 200, update_data, headers)
+
+    def test_admin_delete_property(self, property_id):
+        """Test deleting a property via admin"""
+        if not self.admin_token:
+            print("❌ No admin token available")
+            return False, {}
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.admin_token}'
+        }
+        
+        return self.run_test(f"Admin Delete Property {property_id}", "DELETE", f"api/admin/properties/{property_id}", 200, headers=headers)
+
+    def test_unauthorized_admin_access(self):
+        """Test unauthorized access to admin endpoints"""
+        # Test without token
+        success1, _ = self.run_test("Unauthorized Admin Stats", "GET", "api/admin/stats", 401)
+        
+        # Test with invalid token
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer invalid_token'
+        }
+        success2, _ = self.run_test("Invalid Token Admin Stats", "GET", "api/admin/stats", 401, headers=headers)
+        
+        return success1 and success2
+
+    def test_admin_logout(self):
+        """Test admin logout"""
+        return self.run_test("Admin Logout", "POST", "api/auth/logout", 200)
+
 def main():
     print("🏨 Starting Hospitality Website API Tests")
     print("=" * 50)
@@ -184,6 +330,41 @@ def main():
 
     # Test invalid endpoints
     tester.test_invalid_endpoints()
+
+    print("\n" + "=" * 50)
+    print("🔐 Starting Admin Panel API Tests")
+    print("=" * 50)
+
+    # Test admin authentication
+    admin_login_success, admin_data = tester.test_admin_login()
+    if not admin_login_success:
+        print("❌ Admin login failed, skipping admin tests")
+    else:
+        # Test admin login validation
+        tester.test_admin_login_invalid()
+        
+        # Test admin endpoints
+        tester.test_admin_me()
+        tester.test_admin_stats()
+        tester.test_admin_bookings()
+        tester.test_admin_contacts()
+        
+        # Test property CRUD operations
+        create_success, create_data = tester.test_admin_create_property()
+        if create_success and 'property_id' in create_data:
+            test_property_id = create_data['property_id']
+            
+            # Test update
+            tester.test_admin_update_property(test_property_id)
+            
+            # Test delete
+            tester.test_admin_delete_property(test_property_id)
+        
+        # Test unauthorized access
+        tester.test_unauthorized_admin_access()
+        
+        # Test logout
+        tester.test_admin_logout()
 
     # Print results
     print("\n" + "=" * 50)
