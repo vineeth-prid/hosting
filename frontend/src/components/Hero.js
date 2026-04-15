@@ -1,19 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 
-const HERO_VIDEO = 'https://cdn.pixabay.com/video/2020/05/25/40141-424840842_large.mp4';
-const HERO_POSTER = 'https://images.unsplash.com/photo-1602216056096-3b40cc0c9944?w=1920&q=80';
+const HERO_IMAGE = 'https://images.unsplash.com/photo-1602216056096-3b40cc0c9944?w=1920&q=85';
 
 export default function Hero() {
-  const videoRef = useRef(null);
-
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.play().catch(() => {});
-    }
-  }, []);
-
   const scrollToBooking = () => {
     const el = document.querySelector('#booking');
     if (el) el.scrollIntoView({ behavior: 'smooth' });
@@ -21,17 +12,10 @@ export default function Hero() {
 
   return (
     <section data-testid="hero-section" className="relative h-screen w-full overflow-hidden">
-      <video
-        ref={videoRef}
-        data-testid="hero-video"
-        className="absolute inset-0 w-full h-full object-cover"
-        src={HERO_VIDEO}
-        poster={HERO_POSTER}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
+      <div
+        data-testid="hero-bg"
+        className="absolute inset-0 w-full h-full bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: `url(${HERO_IMAGE})` }}
       />
 
       <div className="video-overlay absolute inset-0" />
